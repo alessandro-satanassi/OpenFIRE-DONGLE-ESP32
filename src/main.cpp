@@ -160,11 +160,59 @@ unsigned long startTime = 0; // = millis();
 
 uint64_t timer_serial_micro = 0;
 
+#ifdef DEBUG_OPENFIRE
+#define TEMPO_OGNI_VISUALIZZAZIONE 1000000 // microsecondi = 1 secondo
+uint64_t timer_ultimo_pacchetto_scompattato = 0;
+uint64_t timer_ultimo_pacchetto_ricevuto_da_callback = 0;
+
+uint64_t tempo_ultimo_pacchetto_scompattato = 0;
+uint64_t tempo_ultimo_pacchetto_ricevuto_da_callback = 0;
+
+
+uint64_t timer_ultimo_dato_visualizzato = 0;
+uint64_t timer_tempo_minimo_pacchetto_ricevuto_da_callback = __UINT64_MAX__;
+uint64_t timer_tempo_minimo_pacchetto_scompattato = __UINT64_MAX__;
+uint64_t timer_tempo_massimo_pacchetto_ricevuto_da_callback = 0;
+uint64_t timer_tempo_massimo_pacchetto_scompattato = 0;
+uint16_t pacchetti_scompattati = 0;
+uint16_t pacchetti_ricevuti_da_callback = 0;
+#endif
+
+
 //uint16_t len_aux;
 uint8_t buffer_aux[FIFO_SIZE_READ_SER];
 void loop()
 {
   
+#ifdef DEBUG_OPENFIRE
+if (esp_timer_get_time() - timer_ultimo_dato_visualizzato > TEMPO_OGNI_VISUALIZZAZIONE) {
+  Serial.print("tempo_minimo_pacchetto_ricevuto_da_callback: "), Serial.println(timer_tempo_minimo_pacchetto_ricevuto_da_callback);
+  Serial.print("tempo_minimo_pacchetto_scompattato: "), Serial.println(timer_tempo_minimo_pacchetto_scompattato);
+
+  Serial.print("tempo_massimo_pacchetto_ricevuto_da_callback: "), Serial.println(timer_tempo_massimo_pacchetto_ricevuto_da_callback);
+  Serial.print("tempo_massimo_pacchetto_scompattato: "), Serial.println(timer_tempo_massimo_pacchetto_scompattato);
+
+  Serial.print("pacchetti_scompattati: "), Serial.println(pacchetti_scompattati);
+  Serial.print("pacchetti_ricevuti_da_callback: "), Serial.println(pacchetti_ricevuti_da_callback);
+
+  Serial.println("================================");
+
+  timer_ultimo_dato_visualizzato = esp_timer_get_time();
+  
+  //timer_ultimo_pacchetto_scompattato = 0;
+  //timer_ultimo_pacchetto_ricevuto_da_callback = 0;
+  
+  timer_tempo_minimo_pacchetto_ricevuto_da_callback = __UINT64_MAX__;
+  timer_tempo_minimo_pacchetto_scompattato = __UINT64_MAX__;
+  
+  timer_tempo_massimo_pacchetto_ricevuto_da_callback = 0;
+  timer_tempo_massimo_pacchetto_scompattato = 0;
+  
+  pacchetti_scompattati = 0;
+  pacchetti_ricevuti_da_callback = 0;
+}
+#endif
+
   //micros();
   //esp_timer_get_time();
   if (esp_timer_get_time() - timer_serial_micro > TIME_OUT_SERIAL_MICRO) // controlla ogni millisecondo più o meno a 9600 bps

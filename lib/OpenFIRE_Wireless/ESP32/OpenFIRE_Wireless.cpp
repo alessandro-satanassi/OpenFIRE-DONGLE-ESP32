@@ -33,6 +33,7 @@ USB_Data_GUN_Wireless usb_data_wireless = {
 SerialWireless_ SerialWireless;
 extern Adafruit_USBD_HID usbHid;
 SemaphoreHandle_t tx_sem = NULL;
+SemaphoreHandle_t semaphore_tx_serial = NULL; // usato per trasmettere buffer seriale
 uint8_t buffer_espnow[ESP_NOW_MAX_DATA_LEN];
 esp_now_peer_info_t peerInfo; // deve stare fuori funzioni da funzioni -- globale --variabile di utilità per configurazione
 
@@ -169,18 +170,34 @@ int SerialWireless_::availableForWriteBin() {
   return BUFFER_SIZE - _writeLen;
 }
 
+void SerialWireless_::flush() { 
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+  esp_timer_stop(timer_handle_serial); // spegni timer
+  flush_sem();
+  xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+}
+
+
 // decidere se controllare se è vuoto anche il buffer_bin
-void SerialWireless_::flush() { // è bloccante e non esce fino a quando il buffer di uscita è completamente vuoto // in virtual com con TinyUISB non è bloccante .. invia il pacchetto più grande che può e ritorna
+void SerialWireless_::flush_sem() { // è bloccante e non esce fino a quando il buffer di uscita è completamente vuoto // in virtual com con TinyUISB non è bloccante .. invia il pacchetto più grande che può e ritorna
   //while (lenBufferSerialWrite || _writeLen) { // non è bloccante in USB CDC, forza solo l'inmvio di quello che c'è nel buffer
     if (lenBufferSerialWrite) {
-    if (availableForWriteBin() > (lenBufferSerialWrite + PREAMBLE_SIZE + POSTAMBLE_SIZE)) {
-        memcpy(&packet.txBuff[PREAMBLE_SIZE], bufferSerialWrite, lenBufferSerialWrite);
-        packet.constructPacket(lenBufferSerialWrite, PACKET_TX::SERIAL_TX);
-        writeBin(packet.txBuff, lenBufferSerialWrite + PREAMBLE_SIZE+POSTAMBLE_SIZE);
-        lenBufferSerialWrite = 0;
+      
+      if (availableForWriteBin() > (lenBufferSerialWrite + PREAMBLE_SIZE + POSTAMBLE_SIZE)) {
+          //esp_timer_stop(timer_handle_serial); // ferma il timer
+          memcpy(&packet.txBuff[PREAMBLE_SIZE], bufferSerialWrite, lenBufferSerialWrite);
+          packet.constructPacket(lenBufferSerialWrite, PACKET_TX::SERIAL_TX);
+          writeBin(packet.txBuff, lenBufferSerialWrite + PREAMBLE_SIZE+POSTAMBLE_SIZE);
+          lenBufferSerialWrite = 0;
+          //esp_timer_stop(timer_handle_serial);
+          /////////////////////////SendData(); // completata la transizione lasciare solo questo
+      }
+      
+      if (lenBufferSerialWrite) esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
+      
+      SendData(); /////////////// provvisorio .. togliere una volta completata la transizione e lasciare solo quello sopra
     }
-    }
-    SendData(); // try a send
+    //SendData(); // try a send
   //}
 }
 
@@ -189,6 +206,8 @@ void SerialWireless_::flushBin() { // mai usata
 }
 
 void SerialWireless_::SendData() {
+  // spedire a gruppi di pacchetti, non mezzo pacchetto // sistemare TODO
+  //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
   uint16_t dataAvailable = _writeLen;
   if (dataAvailable > 0) {
     uint16_t len_tx = dataAvailable > ESP_NOW_MAX_DATA_LEN ? ESP_NOW_MAX_DATA_LEN : dataAvailable;
@@ -205,7 +224,7 @@ void SerialWireless_::SendData() {
       //_writeLen -= len_tx;  
 
 
-      if (result == ESP_OK) {
+      if (result == ESP_OK) { // verificare se esistono casi in cui seppur non risporta ESP_OK vengono trasmessi lo steso
         readIndex += len_tx; 
         if (readIndex >= BUFFER_SIZE) { readIndex -= BUFFER_SIZE; }
         _writeLen -= len_tx;  
@@ -235,28 +254,37 @@ size_t SerialWireless_::writeBin(uint8_t c) {
 }
 
 size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere bloccante se nel buffer di uscita non c'è abbastanza spazio, finchè non ha inviato tutto
+  
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+
   bool aux_tx = true;
+  size_t len_remainer = len;
+  size_t pos_remainer = 0;
   do
   {   
-    if (lenBufferSerialWrite + len <= FIFO_SIZE_WRITE_SERIAL) {
-      memcpy(&bufferSerialWrite[lenBufferSerialWrite], data, len);
-      lenBufferSerialWrite += len;
+    if (lenBufferSerialWrite + len_remainer <= FIFO_SIZE_WRITE_SERIAL) {
+      //xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+      memcpy(&bufferSerialWrite[lenBufferSerialWrite], &data[pos_remainer], len_remainer);
+      if (lenBufferSerialWrite == 0) esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
+      lenBufferSerialWrite += len_remainer;
+      //xSemaphoreGive(semaphore_tx_serial);
       aux_tx = false;
+
+      ////////////esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
     }
-    //flush(); // in effetti si può mettere flush al posto dell'if sottostante .. verificare bene
-    // =================
-    flush(); // verificare bene
-    /*
-    if (availableForWriteBin() > (lenBufferSerialWrite + PREAMBLE_SIZE + POSTAMBLE_SIZE)) {
-      memcpy(&packet.txBuff[PREAMBLE_SIZE], bufferSerialWrite, lenBufferSerialWrite);
-      packet.constructPacket(lenBufferSerialWrite, PACKET_TX::SERIAL_TX);
-      writeBin(packet.txBuff, lenBufferSerialWrite + PREAMBLE_SIZE+POSTAMBLE_SIZE);
-      lenBufferSerialWrite = 0;
+    else{
+      len_remainer -= FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite;
+      memcpy(&bufferSerialWrite[lenBufferSerialWrite], &data[pos_remainer], FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite);
+      lenBufferSerialWrite = FIFO_SIZE_WRITE_SERIAL;
+      pos_remainer += FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite; 
+      esp_timer_stop(timer_handle_serial);
+      flush_sem();
+      yield();  
     }
-    */
-    SendData(); // try a send
   } while (aux_tx);
-  // =================
+  
+  xSemaphoreGive(semaphore_tx_serial);
+  
   return len;
 }
 
@@ -284,6 +312,22 @@ size_t SerialWireless_::writeBin(const uint8_t *data, size_t len) {
 }
 
 void SerialWireless_::SendPacket(const uint8_t *data, const uint8_t &len,const uint8_t &packetID) { 
+  /*
+  switch (packetID)
+  {
+  case PACKET_TX::MOUSE_TX:
+    // gestire una fifo separata ?
+    break;
+  case PACKET_TX::KEYBOARD_TX:
+    //
+    break;
+  case PACKET_TX::GAMEPADE_TX:
+    //
+    break;
+  default:
+    break;
+  }
+  */
   if (availableForWriteBin() > (len + PREAMBLE_SIZE + POSTAMBLE_SIZE)) {
     memcpy(&packet.txBuff[PREAMBLE_SIZE], data, len);
     packet.constructPacket(len, packetID);
@@ -319,11 +363,16 @@ int SerialWireless_::availablePacket() {
 
 void SerialWireless_::begin() {
   configST myConfig; // variabile di utilità per configurazione
+  // ============ inizializzazione semafori =============
   tx_sem = xSemaphoreCreateBinary();
+  semaphore_tx_serial = xSemaphoreCreateBinary(); // semaforo per tx dati seriali
 
   xSemaphoreGive(tx_sem);
-  
-  WiFi.mode(WIFI_STA); // ??????????????????????
+  xSemaphoreGive(semaphore_tx_serial);
+  // ==== fine inizializzazione semafori
+
+
+  WiFi.mode(WIFI_STA); 
   
   /*
   esp_err_t err = esp_wifi_start();
@@ -419,7 +468,8 @@ void SerialWireless_::begin() {
     if (lastDongleSave) stato_connessione_wireless = CONNECTION_STATE::NONE_CONNECTION_DONGLE;
   #endif // GUN
   */
-  TinyUSBDevices.wireless_mode = WIRELESS_MODE::ENABLE_ESP_NOW_TO_DONGLE; 
+  TinyUSBDevices.wireless_mode = WIRELESS_MODE::ENABLE_ESP_NOW_TO_DONGLE;
+  setupTimer(); // crea i timer .. timer per invio dati seriali
 }
 
 bool SerialWireless_::end() {
@@ -432,6 +482,7 @@ bool SerialWireless_::end() {
   }
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF); // Disattiva il WiFi
+  esp_timer_delete(timer_handle_serial);
   return true;
 }
 
@@ -864,5 +915,43 @@ static void _esp_now_tx_cb(const uint8_t *mac_addr, esp_now_send_status_t status
   xSemaphoreGive(/*SerialWireless.*/tx_sem);
   SerialWireless.SendData();
 }
+
+// ================================== TIMER ===================================
+// CALLBACK
+void timer_callback_serial(void* arg) {
+    //Serial.println("Timer scaduto!");
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+  //Serial.println("Timer scaduto e semaforo rilasciato: eseguo la funzione!");
+  if (SerialWireless.lenBufferSerialWrite) SerialWireless.flush_sem();
+  xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+}
+// ===============================================================================
+
+void SerialWireless_::setupTimer() {
+    esp_timer_create_args_t timer_args = {
+        .callback = &timer_callback_serial,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "timer_serial"
+    };
+    
+    esp_timer_create(&timer_args, &timer_handle_serial);
+    //esp_timer_delete(timer_handle_serial);
+    //esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
+}
+
+void SerialWireless_::stopTimer_serial() {
+    esp_timer_stop(timer_handle_serial);
+}
+
+void SerialWireless_::resetTimer_serial(uint64_t duration_us) {
+    esp_timer_stop(timer_handle_serial);
+    esp_timer_start_once(timer_handle_serial, duration_us);
+}
+
+
+
+
+// ==========================   FINE TIMER ====================================
 
 #endif //OPENFIRE_WIRELESS_ENABLE
