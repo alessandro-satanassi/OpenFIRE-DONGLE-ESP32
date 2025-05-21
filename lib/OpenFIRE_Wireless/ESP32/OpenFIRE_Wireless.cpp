@@ -34,6 +34,7 @@ SerialWireless_ SerialWireless;
 extern Adafruit_USBD_HID usbHid;
 SemaphoreHandle_t tx_sem = NULL;
 SemaphoreHandle_t semaphore_tx_serial = NULL; // usato per trasmettere buffer seriale
+SemaphoreHandle_t semaphore_writer_bin = NULL; // usato per trasmettere buffer seriale
 uint8_t buffer_espnow[ESP_NOW_MAX_DATA_LEN];
 esp_now_peer_info_t peerInfo; // deve stare fuori funzioni da funzioni -- globale --variabile di utilità per configurazione
 
@@ -167,6 +168,10 @@ int SerialWireless_::availableForWrite() {
 }
 
 int SerialWireless_::availableForWriteBin() {
+  //xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  //int len = BUFFER_SIZE - _writeLen;
+  //xSemaphoreGive(semaphore_writer_bin);
+  //return len;
   return BUFFER_SIZE - _writeLen;
 }
 
@@ -208,15 +213,24 @@ void SerialWireless_::flushBin() { // mai usata
 void SerialWireless_::SendData() {
   // spedire a gruppi di pacchetti, non mezzo pacchetto // sistemare TODO
   //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
-  uint16_t dataAvailable = _writeLen;
-  if (dataAvailable > 0) {
-    uint16_t len_tx = dataAvailable > ESP_NOW_MAX_DATA_LEN ? ESP_NOW_MAX_DATA_LEN : dataAvailable;
-    uint16_t bytesToSendEnd = len_tx > (BUFFER_SIZE - readIndex) ? BUFFER_SIZE - readIndex : len_tx;
-    memcpy(buffer_espnow, &buffer[readIndex], bytesToSendEnd);
-    if (len_tx > bytesToSendEnd) {
-      memcpy(&buffer_espnow[bytesToSendEnd], &buffer[0], len_tx - bytesToSendEnd);
-    }
+  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  if (_writeLen > 0) {
     if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
+       SendData_sem();
+    }
+  }
+  xSemaphoreGive(semaphore_writer_bin);
+}
+
+void SerialWireless_::SendData_sem() {
+  uint16_t len_tx = _writeLen > ESP_NOW_MAX_DATA_LEN ? ESP_NOW_MAX_DATA_LEN : _writeLen;
+  uint16_t bytesToSendEnd = len_tx > (BUFFER_SIZE - readIndex) ? BUFFER_SIZE - readIndex : len_tx;
+  memcpy(buffer_espnow, &buffer[readIndex], bytesToSendEnd);
+  if (len_tx > bytesToSendEnd) {
+    memcpy(&buffer_espnow[bytesToSendEnd], &buffer[0], len_tx - bytesToSendEnd);
+  }
+      //if (uxSemaphoreGetCount(tx_sem)) {/*semaforo disponibile*/}
+      //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
       esp_err_t result = esp_now_send(peerAddress, buffer_espnow, len_tx);
       
       //readIndex += len_tx; 
@@ -241,9 +255,8 @@ void SerialWireless_::SendData() {
       } else if (result == ESP_ERR_ESPNOW_IF) {
         //Serial.println("Interface does not match.");
       } //  else Serial.println("Errore sconosciuto");
-    }
-  }
 }
+
 
 size_t SerialWireless_::write(uint8_t c) {
   return write(&c, 1);
@@ -289,6 +302,7 @@ size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere 
 }
 
 size_t SerialWireless_::writeBin(const uint8_t *data, size_t len) {
+  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
   if ((BUFFER_SIZE - _writeLen) >= len) {
     size_t firstChunk = BUFFER_SIZE - writeIndex;
     if (firstChunk < len) {
@@ -302,13 +316,16 @@ size_t SerialWireless_::writeBin(const uint8_t *data, size_t len) {
       if (writeIndex == BUFFER_SIZE) writeIndex = 0;
     }
     _writeLen += len;
+    xSemaphoreGive(semaphore_writer_bin);
     return len;
   }
   else {
     _overflow_write = true;
     //Serial.println("Overflow nello scrivere nel BUFFER scrittura");
+    xSemaphoreGive(semaphore_writer_bin);  
     return 0;
   }
+  //xSemaphoreGive(semaphore_writer_bin);
 }
 
 void SerialWireless_::SendPacket(const uint8_t *data, const uint8_t &len,const uint8_t &packetID) { 
@@ -366,9 +383,11 @@ void SerialWireless_::begin() {
   // ============ inizializzazione semafori =============
   tx_sem = xSemaphoreCreateBinary();
   semaphore_tx_serial = xSemaphoreCreateBinary(); // semaforo per tx dati seriali
+  semaphore_writer_bin = xSemaphoreCreateBinary();
 
   xSemaphoreGive(tx_sem);
   xSemaphoreGive(semaphore_tx_serial);
+  xSemaphoreGive(semaphore_writer_bin);
   // ==== fine inizializzazione semafori
 
 
@@ -911,9 +930,20 @@ static void _esp_now_rx_cb(const esp_now_recv_info_t *info, const uint8_t *data,
   SerialWireless.checkForRxPacket();
 }
 
+
+
 static void _esp_now_tx_cb(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  xSemaphoreGive(/*SerialWireless.*/tx_sem);
-  SerialWireless.SendData();
+  
+  
+  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  
+  if (SerialWireless._writeLen > 0 ) {
+    SerialWireless.SendData_sem();
+  }
+  else xSemaphoreGive(/*SerialWireless.*/tx_sem);
+    
+  xSemaphoreGive(semaphore_writer_bin);
+  
 }
 
 // ================================== TIMER ===================================

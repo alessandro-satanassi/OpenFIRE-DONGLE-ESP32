@@ -226,6 +226,7 @@ class SerialWireless_ : public Stream
         
   // ======== generiche ============
   void SendData();  // utilizziamo anche flush
+  void SendData_sem();
   void SendPacket(const uint8_t *data, const uint8_t &len,const uint8_t &packetID); // non penso lo utilizzeremo
 
   bool checkForRxPacket(); // andrà nel ciclo principale .. messo nella callback
