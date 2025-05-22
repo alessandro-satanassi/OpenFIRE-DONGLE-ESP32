@@ -39,6 +39,9 @@
     "arduino",
     "espidf"
   ],
+  "platforms": [
+    "espressif32"
+  ],
   "name": "Espressif LILYGO-T-DONGLE-S3 (16 MB Flash Quad, No PSRAM)",
   "upload": {
     "flash_size": "16MB",
