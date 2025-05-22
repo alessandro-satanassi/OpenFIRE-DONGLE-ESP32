@@ -1,0 +1,286 @@
+name: DONGLE - OpenFIRE Build Package and Upload release assets - DONGLE
+
+on:
+# release:
+#   types: [created]
+#   types: [published]
+# push:
+#   tags:
+#     - "v*"
+# push:
+#   branches: [ main ]
+# pull_request:
+#   branches: [ main ]
+  workflow_dispatch: # Permetti l'attivazione manuale
+    inputs:
+      release:
+        description: "Creare una versione?"
+        required: true
+        default: "no"
+        type: choice
+        options:
+          - "no"
+          - "yes"
+
+permissions:
+  contents: write # Necessario per actions/upload-release-asset per caricare asset sulla release
+
+jobs:
+  build_firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # imposta un timeout di 2 ore
+    name: Build DONGLE Firmware for ${{ matrix.boards }}
+    strategy:
+      matrix:
+        #os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - name: 'ESP32_S3_WROOM1_DevKitC_1_N16R8' 
+            boards: 'ESP32_S3_WROOM1_DevKitC_1_N16R8'
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'
+            address_littleFS: '0xc90000'
+          - name: 'WAVESHARE_ESP32_S3_PICO' 
+            boards: 'WAVESHARE_ESP32_S3_PICO'
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'       
+            address_littleFS: '0xc90000'
+          - name: 'LILYGO_T_DONGLE_S3' 
+            boards: 'LILYGO_T_DONGLE_S3'
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'       
+            address_littleFS: '0xc90000'
+
+    steps:
+      - name: Checkout repository OpenFIRE-DONGLE-Esp32 with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3"
+
+      - name: Install PlatformIO Core
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+
+      - if: (matrix.chip == 'esp32s3')
+        name: Build DONGLE firmware OpenFIRE ESP32-S3 - FLASH ${{ matrix.flash_size }} - Compile for ${{ matrix.boards }}
+        run: |
+          pio run -e ${{ matrix.boards }}
+          python ~/.platformio/packages/tool-esptoolpy/esptool.py --chip ${{ matrix.chip }} merge_bin -o OpenFIRE-DONGLE-${{ matrix.boards }}.bin --flash_mode ${{ matrix.flash_mode }} --flash_size ${{ matrix.flash_size }} \
+            0x0000 .pio/build/${{ matrix.boards }}/bootloader.bin \
+            0x8000 .pio/build/${{ matrix.boards }}/partitions.bin \
+            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x10000 .pio/build/${{ matrix.boards }}/firmware.bin
+          
+      - name: Upload OpenFIRE DONGLE firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenFIRE-DONGLE-${{ matrix.boards }}
+          path: OpenFIRE-DONGLE-${{ matrix.boards }}.bin
+          if-no-files-found: error
+
+  package_and_upload_release_assets:
+    name: Package for ${{ matrix.boards.name }} on ${{ matrix.os_config.name }}
+    needs: build_firmware # Esegui solo se build_firmware ha successo
+    if: ${{ github.event.inputs.release == 'yes' }}
+    runs-on: ${{ matrix.os_config.runner }}
+    strategy:
+      matrix:
+        boards:
+          - name: 'ESP32_S3_WROOM1_DevKitC_1_N16R8' 
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'
+            address_littleFS: '0xc90000'
+          - name: 'WAVESHARE_ESP32_S3_PICO' 
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'         
+            address_littleFS: '0xc90000'
+          - name: 'LILYGO_T_DONGLE_S3' 
+            boards: 'LILYGO_T_DONGLE_S3'
+            chip: 'esp32s3'
+            flash_size: '16MB'
+            flash_mode: 'dio'
+            flash_freq: '80m'       
+            address_littleFS: '0xc90000'
+          
+        os_config:
+          - name: windows-64bit
+            runner: windows-latest
+            esptool_url: https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-win64.zip
+            esptool_path_in_zip: esptool-win64/
+            esptool_filename_in_zip: esptool.exe # Nome del file eseguibile dentro lo ZIP di esptool
+            script_name: flash_firmware.bat
+          - name: linux-amd-64bit
+            runner: ubuntu-latest
+            esptool_url: https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-linux-amd64.zip
+            esptool_path_in_zip: esptool-linux-amd64/
+            esptool_filename_in_zip: esptool
+            script_name: flash_firmware.sh
+          - name: macos-64bit
+            runner: macos-latest
+            esptool_url: https://github.com/espressif/esptool/releases/download/v4.8.1/esptool-v4.8.1-macos.zip
+            esptool_path_in_zip: esptool-macos/
+            esptool_filename_in_zip: esptool
+            script_name: flash_firmware.sh
+            
+    steps:
+      #- name: Checkout repository (opzionale, per contesto o se gli script sono nel repo)
+      #  uses: actions/checkout@v4
+
+      - name: Download DONGLE firmware .bin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenFIRE-DONGLE-${{ matrix.boards.name }} # Corrisponde al nome dell'artefatto caricato da build_firmware
+          path: ./downloaded_firmware # Scarica in una sottocartella per evitare conflitti di nomi
+
+      - name: Prepare staging directory
+        shell: bash
+        run: |
+          mkdir staging_dir
+          # Il file firmware scaricato è OpenFIRE-DONGLE-${{ matrix.boards.name }}.bin
+          mv ./downloaded_firmware/OpenFIRE-DONGLE-${{ matrix.boards.name }}.bin ./staging_dir/firmware.bin
+          echo "Moved OpenFIRE-DONGLE-${{ matrix.boards.name }}.bin to staging_dir/firmware.bin"
+          ls -l ./staging_dir
+
+      - name: Download and extract esptool
+        shell: bash 
+        run: |
+          echo "Downloading esptool from ${{ matrix.os_config.esptool_url }}"
+          curl -L -o esptool_archive.zip "${{ matrix.os_config.esptool_url }}"
+          
+          echo "Extracting ${{ matrix.os_config.esptool_path_in_zip }}${{ matrix.os_config.esptool_filename_in_zip }} from esptool_archive.zip to staging_dir/"
+          # L'opzione -j di unzip estrae i file senza creare le loro directory originali (li mette direttamente in -d)
+          unzip -j esptool_archive.zip "${{ matrix.os_config.esptool_path_in_zip }}${{ matrix.os_config.esptool_filename_in_zip }}" -d staging_dir
+          
+          echo "Contents of staging_dir after esptool extraction:"
+          ls -l staging_dir
+          
+          # Rendi esptool eseguibile su Linux/macOS
+          if [[ "${{ matrix.os_config.name }}" == "linux-amd-64bit" || "${{ matrix.os_config.name }}" == "macos-64bit" ]]; then
+            if [ -f "staging_dir/${{ matrix.os_config.esptool_filename_in_zip }}" ]; then
+              chmod +x "staging_dir/${{ matrix.os_config.esptool_filename_in_zip }}"
+              echo "Made staging_dir/${{ matrix.os_config.esptool_filename_in_zip }} executable."
+            else
+              echo "Error: esptool executable not found at staging_dir/${{ matrix.os_config.esptool_filename_in_zip }}"
+              exit 1
+            fi
+          fi
+
+      - name: Create flashing script
+        shell: bash 
+        run: |
+          SCRIPT_PATH="staging_dir/${{ matrix.os_config.script_name }}"
+          # ATTENZIONE: Questo chip_type è preso dalla matrice os_config. 
+          # Se hai chip diversi per diverse 'matrix.board', dovrai modificare questa logica.
+          CHIP_TYPE="${{ matrix.boards.chip }}" 
+          ESPTOOL_EXECUTABLE_NAME="${{ matrix.os_config.esptool_filename_in_zip }}"
+          FLASH_MODE="${{ matrix.boards.flash_mode }}"
+          FLASH_FREQ="${{ matrix.boards.flash_freq }}"
+          BAUD="460800"
+
+          echo "Creating DONGLE script $SCRIPT_PATH for board ${{ matrix.boards.name }} with chip $CHIP_TYPE"
+          
+          if [[ "${{ matrix.os_config.name }}" == "windows-64bit" ]]; then
+          # Script per Windows (.bat)
+          cat <<EOF > "$SCRIPT_PATH"
+          @echo off
+          echo Flashing OpenFIRE DONGLE Firmware for board: ${{ matrix.boards.name }}
+          echo.
+          set FIRMWARE_FILE=firmware.bin
+          set /p COMPORT="Enter the COM port (e.g. COM3), or leave blank for automatic detection: "
+          if not "%COMPORT%"=="" set COMPORT=--port "%COMPORT%"
+          %~dp0\\$ESPTOOL_EXECUTABLE_NAME --chip $CHIP_TYPE %COMPORT% --baud $BAUD --before default_reset --after hard_reset write_flash -z --flash_mode $FLASH_MODE --flash_freq $FLASH_FREQ --flash_size detect 0x0000 %FIRMWARE_FILE%
+          echo.
+          if %errorlevel% neq 0 (
+            echo ERROR: Firmware DONGLE flashing failed. Check connections and micro.
+          ) else (
+            echo Firmware DONGLE flashing completed!
+          )
+          pause
+          EOF
+
+          else # Script per Linux o macOS (.sh) 
+          cat <<EOF > "$SCRIPT_PATH"
+          #!/bin/bash
+          echo "Flashing OpenFIRE DONGLE Firmware for board: ${{ matrix.boards.name }}"
+          # Rende esptool eseguibile (dovrebbe essere gia' stato fatto, ma e' una sicurezza)
+          chmod +x ./$ESPTOOL_EXECUTABLE_NAME
+          echo ""
+          FIRMWARE_FILE="firmware.bin"
+          read -r -p "Enter the COM port (e.g. /dev/ttyUSB0 for Linux, or /dev/tty.usbserial for macOS), or leave blank for automatic detection: " COMPORT
+          if [[ -n \$COMPORT ]]; then
+            COMPORT="--port \$COMPORT"
+          fi
+          ./$ESPTOOL_EXECUTABLE_NAME --chip $CHIP_TYPE \$COMPORT --baud $BAUD --before default_reset --after hard_reset write_flash -z --flash_mode $FLASH_MODE --flash_freq $FLASH_FREQ --flash_size detect 0x0000 \$FIRMWARE_FILE
+          echo ""
+          if [[ \$? -ne 0 ]]; then
+            echo "ERROR: Firmware DONGLE flashing failed. Check connections and micro."
+          else
+            echo "Firmware DONGLE flashing completed!"
+          fi
+          read -r -p "Press Enter to exit."          
+          EOF
+
+          chmod +x "$SCRIPT_PATH" # Rende lo script generato eseguibile
+          fi
+          
+          echo "Creato script: $SCRIPT_PATH"
+          echo "--- Contenuto dello script ---"
+          cat "$SCRIPT_PATH"
+          echo "---------------------------"
+
+      - name: Create ZIP archive
+        shell: bash
+        run: |
+          ARCHIVE_FILENAME="OpenFIRE-DONGLE-${{ matrix.boards.name }}-${{ matrix.os_config.name }}.zip"
+          echo "ARCHIVE_FILENAME=$ARCHIVE_FILENAME" >> $GITHUB_ENV
+          
+          echo "Creating archive: $ARCHIVE_FILENAME from staging_dir contents..."
+          if [[ "${{ matrix.os_config.name }}" == "windows-64bit" ]]; then
+            # Utilizza Compress-Archive di PowerShell, standard su Windows runners
+            powershell -Command "Compress-Archive -Path staging_dir\* -DestinationPath ${{ github.workspace }}/$ARCHIVE_FILENAME -Force"
+          else
+            # Utilizza zip, standard su Linux/macOS runners
+            (cd staging_dir && zip -r "${{ github.workspace }}/$ARCHIVE_FILENAME" .)
+          fi
+          echo "Archive $ARCHIVE_FILENAME created successfully."
+          ls -l "${{ github.workspace }}/$ARCHIVE_FILENAME"
+
+      - name: Upload ZIP Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenFIRE-DONGLE-${{ matrix.boards.name }}-${{ matrix.os_config.name }}.zip # Nome dell'asset sulla release
+          path: ${{ github.workspace }}/OpenFIRE-DONGLE-${{ matrix.boards.name }}-${{ matrix.os_config.name }}.zip # Path all'archivio ZIP creato
+          if-no-files-found: error
+
+
+    # - name: Upload ZIP to Release Assets
+    #   uses: actions/upload-release-asset@v1
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   with:
+    #     upload_url: ${{ github.event.release.upload_url }}
+    #     asset_path: ./${{ env.ARCHIVE_FILENAME }} # Path all'archivio ZIP creato
+    #     asset_name: ${{ env.ARCHIVE_FILENAME }} # Nome dell'asset sulla release
+    #     asset_content_type: application/zip
+
