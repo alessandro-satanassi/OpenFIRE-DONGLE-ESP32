@@ -175,16 +175,21 @@ int SerialWireless_::availableForWriteBin() {
   return BUFFER_SIZE - _writeLen;
 }
 
-void SerialWireless_::flush() { 
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+// bloccante fino a quando il buffer seriale non è vuoto (non bloccante fino a quando sono stati inviati effettivamente i dati)
+void SerialWireless_::flush() {
   esp_timer_stop(timer_handle_serial); // spegni timer
-  flush_sem();
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+  //esp_timer_stop(timer_handle_serial); // spegni timer
+  while (lenBufferSerialWrite) {
+    flush_sem();
+    yield();
+  }
   xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
 }
 
 
 // decidere se controllare se è vuoto anche il buffer_bin
-void SerialWireless_::flush_sem() { // è bloccante e non esce fino a quando il buffer di uscita è completamente vuoto // in virtual com con TinyUISB non è bloccante .. invia il pacchetto più grande che può e ritorna
+bool SerialWireless_::flush_sem() { // è bloccante e non esce fino a quando il buffer di uscita è completamente vuoto // in virtual com con TinyUISB non è bloccante .. invia il pacchetto più grande che può e ritorna
   //while (lenBufferSerialWrite || _writeLen) { // non è bloccante in USB CDC, forza solo l'inmvio di quello che c'è nel buffer
     if (lenBufferSerialWrite) {
       
@@ -195,13 +200,16 @@ void SerialWireless_::flush_sem() { // è bloccante e non esce fino a quando il 
           writeBin(packet.txBuff, lenBufferSerialWrite + PREAMBLE_SIZE+POSTAMBLE_SIZE);
           lenBufferSerialWrite = 0;
           //esp_timer_stop(timer_handle_serial);
-          /////////////////////////SendData(); // completata la transizione lasciare solo questo
+          SendData(); // completata la transizione lasciare solo questo
+          return true;
       }
+      else SendData();
+      //// ??? if (lenBufferSerialWrite) esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
       
-      if (lenBufferSerialWrite) esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
-      
-      SendData(); /////////////// provvisorio .. togliere una volta completata la transizione e lasciare solo quello sopra
+      ///////SendData(); /////////////// provvisorio .. togliere una volta completata la transizione e lasciare solo quello sopra
+      //return false;
     }
+    return false;
     //SendData(); // try a send
   //}
 }
@@ -213,13 +221,15 @@ void SerialWireless_::flushBin() { // mai usata
 void SerialWireless_::SendData() {
   // spedire a gruppi di pacchetti, non mezzo pacchetto // sistemare TODO
   //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
-  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
-  if (_writeLen > 0) {
-    if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
+  if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
+    xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+    if (_writeLen > 0) {
+    //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
        SendData_sem();
-    }
+    //}
+    } else xSemaphoreGive(/*SerialWireless.*/tx_sem);
+    xSemaphoreGive(semaphore_writer_bin);
   }
-  xSemaphoreGive(semaphore_writer_bin);
 }
 
 void SerialWireless_::SendData_sem() {
@@ -229,32 +239,36 @@ void SerialWireless_::SendData_sem() {
   if (len_tx > bytesToSendEnd) {
     memcpy(&buffer_espnow[bytesToSendEnd], &buffer[0], len_tx - bytesToSendEnd);
   }
-      //if (uxSemaphoreGetCount(tx_sem)) {/*semaforo disponibile*/}
-      //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
-      esp_err_t result = esp_now_send(peerAddress, buffer_espnow, len_tx);
+  //if (uxSemaphoreGetCount(tx_sem)) {/*semaforo disponibile*/}
+  //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
+  esp_err_t result = esp_now_send(peerAddress, buffer_espnow, len_tx);
       
-      //readIndex += len_tx; 
-      //if (readIndex >= BUFFER_SIZE) { readIndex -= BUFFER_SIZE; }
-      //_writeLen -= len_tx;  
+  //readIndex += len_tx; 
+  //if (readIndex >= BUFFER_SIZE) { readIndex -= BUFFER_SIZE; }
+  //_writeLen -= len_tx;  
 
 
-      if (result == ESP_OK) { // verificare se esistono casi in cui seppur non risporta ESP_OK vengono trasmessi lo steso
-        readIndex += len_tx; 
-        if (readIndex >= BUFFER_SIZE) { readIndex -= BUFFER_SIZE; }
-        _writeLen -= len_tx;  
-      } else if (result == ESP_ERR_ESPNOW_NOT_INIT) {
-        //Serial.println("ESPNOW not init.");
-      } else if (result == ESP_ERR_ESPNOW_ARG) {
-        //Serial.println("Invalid argument");
-      } else if (result == ESP_ERR_ESPNOW_INTERNAL) {
-        //Serial.println("Internal Error");
-      } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
-        //Serial.println("Our of memory");
-      } else if (result == ESP_ERR_ESPNOW_NOT_FOUND) {
-        //Serial.println("Peer not found.");
-      } else if (result == ESP_ERR_ESPNOW_IF) {
-        //Serial.println("Interface does not match.");
-      } //  else Serial.println("Errore sconosciuto");
+  if (result == ESP_OK) { // verificare se esistono casi in cui seppur non risporta ESP_OK vengono trasmessi lo steso
+    readIndex += len_tx; 
+    if (readIndex >= BUFFER_SIZE) { readIndex -= BUFFER_SIZE; }
+    _writeLen -= len_tx;
+    //return true;
+  } //else return false;
+  /*
+  else if (result == ESP_ERR_ESPNOW_NOT_INIT) {
+    //Serial.println("ESPNOW not init.");
+  } else if (result == ESP_ERR_ESPNOW_ARG) {
+    //Serial.println("Invalid argument");
+  } else if (result == ESP_ERR_ESPNOW_INTERNAL) {
+    //Serial.println("Internal Error");
+  } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
+    //Serial.println("Our of memory");
+  } else if (result == ESP_ERR_ESPNOW_NOT_FOUND) {
+    //Serial.println("Peer not found.");
+  } else if (result == ESP_ERR_ESPNOW_IF) {
+    //Serial.println("Interface does not match.");
+  } //  else Serial.println("Errore sconosciuto");
+  */
 }
 
 
@@ -268,13 +282,15 @@ size_t SerialWireless_::writeBin(uint8_t c) {
 
 size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere bloccante se nel buffer di uscita non c'è abbastanza spazio, finchè non ha inviato tutto
   
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+  //xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
 
   bool aux_tx = true;
   size_t len_remainer = len;
   size_t pos_remainer = 0;
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
   do
   {   
+    //xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
     if (lenBufferSerialWrite + len_remainer <= FIFO_SIZE_WRITE_SERIAL) {
       //xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
       memcpy(&bufferSerialWrite[lenBufferSerialWrite], &data[pos_remainer], len_remainer);
@@ -285,15 +301,18 @@ size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere 
 
       ////////////esp_timer_start_once(timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
     }
-    else{
+    else if (lenBufferSerialWrite < FIFO_SIZE_WRITE_SERIAL) {
+      esp_timer_stop(timer_handle_serial);
       len_remainer -= FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite;
       memcpy(&bufferSerialWrite[lenBufferSerialWrite], &data[pos_remainer], FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite);
       lenBufferSerialWrite = FIFO_SIZE_WRITE_SERIAL;
       pos_remainer += FIFO_SIZE_WRITE_SERIAL - lenBufferSerialWrite; 
-      esp_timer_stop(timer_handle_serial);
+      //esp_timer_stop(timer_handle_serial);
       flush_sem();
-      yield();  
+      //yield();  
     }
+    else flush_sem();
+    yield();
   } while (aux_tx);
   
   xSemaphoreGive(semaphore_tx_serial);
@@ -950,9 +969,18 @@ static void _esp_now_tx_cb(const uint8_t *mac_addr, esp_now_send_status_t status
 // CALLBACK
 void timer_callback_serial(void* arg) {
     //Serial.println("Timer scaduto!");
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);  // fai solo se semaforo libero, altrimenti
   //Serial.println("Timer scaduto e semaforo rilasciato: eseguo la funzione!");
-  if (SerialWireless.lenBufferSerialWrite) SerialWireless.flush_sem();
+  //if (SerialWireless.lenBufferSerialWrite) {
+  while (SerialWireless.lenBufferSerialWrite) {
+    SerialWireless.flush_sem();
+    yield();
+  }
+    //SerialWireless.flush_sem(); // valutare flush normale ... per essere sicuri invii tutti idati
+    
+    
+    //if (SerialWireless.lenBufferSerialWrite) esp_timer_start_once(SerialWireless.timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
+  //}
   xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
 }
 // ===============================================================================

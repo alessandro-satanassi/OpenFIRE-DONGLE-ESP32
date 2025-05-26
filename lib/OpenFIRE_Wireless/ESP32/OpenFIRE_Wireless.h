@@ -214,7 +214,7 @@ class SerialWireless_ : public Stream
   size_t writeBin(const uint8_t *data, size_t len);
   void flushBin();
   int availableForWriteBin();
-  void flush_sem();
+  bool flush_sem();
   // inserire da me per gestione buffer ingresso
   int peekBin();
   int readBin();
