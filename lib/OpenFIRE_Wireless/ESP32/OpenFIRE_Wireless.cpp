@@ -32,9 +32,16 @@ USB_Data_GUN_Wireless usb_data_wireless = {
 
 SerialWireless_ SerialWireless;
 extern Adafruit_USBD_HID usbHid;
-SemaphoreHandle_t tx_sem = NULL;
-SemaphoreHandle_t semaphore_tx_serial = NULL; // usato per trasmettere buffer seriale
-SemaphoreHandle_t semaphore_writer_bin = NULL; // usato per trasmettere buffer seriale
+SemaphoreHandle_t tx_sem = NULL; // usato per callbalck dio fine trasmissione espnow
+
+#ifdef MUTEX
+  SemaphoreHandle_t mutex_tx_serial = NULL; // usato per trasmettere buffer seriale
+  SemaphoreHandle_t mutex_writer_bin = NULL; // usato per trasmettere buffer seriale
+#else
+  SemaphoreHandle_t semaphore_tx_serial = NULL; // usato per trasmettere buffer seriale
+  SemaphoreHandle_t semaphore_writer_bin = NULL; // usato per trasmettere buffer seriale
+#endif
+
 uint8_t buffer_espnow[ESP_NOW_MAX_DATA_LEN];
 esp_now_peer_info_t peerInfo; // deve stare fuori funzioni da funzioni -- globale --variabile di utilità per configurazione
 
@@ -178,13 +185,23 @@ int SerialWireless_::availableForWriteBin() {
 // bloccante fino a quando il buffer seriale non è vuoto (non bloccante fino a quando sono stati inviati effettivamente i dati)
 void SerialWireless_::flush() {
   esp_timer_stop(timer_handle_serial); // spegni timer
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+  
+  #ifdef MUTEX
+    xSemaphoreTake(mutex_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+  #else
+    xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY); // prende semaforo / attende finchè è libero
+  #endif
+
   //esp_timer_stop(timer_handle_serial); // spegni timer
   while (lenBufferSerialWrite) {
     flush_sem();
     yield();
   }
-  xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+  #ifdef MUTEX
+    xSemaphoreGive(mutex_tx_serial);  // Rilascio il semaforo dopo la callback
+  #else
+    xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+  #endif
 }
 
 
@@ -222,13 +239,24 @@ void SerialWireless_::SendData() {
   // spedire a gruppi di pacchetti, non mezzo pacchetto // sistemare TODO
   //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
   if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
-    xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+
+    #ifdef MUTEX
+      xSemaphoreTake(mutex_writer_bin, portMAX_DELAY);
+    #else
+      xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+    #endif
+
     if (_writeLen > 0) {
     //if (xSemaphoreTake(tx_sem, 0) == pdTRUE) {
        SendData_sem();
     //}
     } else xSemaphoreGive(/*SerialWireless.*/tx_sem);
-    xSemaphoreGive(semaphore_writer_bin);
+    
+    #ifdef MUTEX
+      xSemaphoreGive(mutex_writer_bin);
+    #else
+      xSemaphoreGive(semaphore_writer_bin);
+    #endif
   }
 }
 
@@ -287,7 +315,13 @@ size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere 
   bool aux_tx = true;
   size_t len_remainer = len;
   size_t pos_remainer = 0;
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+  
+  #ifdef MUTEX
+    xSemaphoreTake(mutex_tx_serial, portMAX_DELAY);
+  #else
+    xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
+  #endif
+  
   do
   {   
     //xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);
@@ -315,13 +349,23 @@ size_t SerialWireless_::write(const uint8_t *data, size_t len) { // deve essere 
     yield();
   } while (aux_tx);
   
-  xSemaphoreGive(semaphore_tx_serial);
+  #ifdef MUTEX
+    xSemaphoreGive(mutex_tx_serial);
+  #else
+    xSemaphoreGive(semaphore_tx_serial);
+  #endif
   
   return len;
 }
 
 size_t SerialWireless_::writeBin(const uint8_t *data, size_t len) {
-  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  
+  #ifdef MUTEX
+    xSemaphoreTake(mutex_writer_bin, portMAX_DELAY);
+  #else
+    xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  #endif
+  
   if ((BUFFER_SIZE - _writeLen) >= len) {
     size_t firstChunk = BUFFER_SIZE - writeIndex;
     if (firstChunk < len) {
@@ -335,13 +379,22 @@ size_t SerialWireless_::writeBin(const uint8_t *data, size_t len) {
       if (writeIndex == BUFFER_SIZE) writeIndex = 0;
     }
     _writeLen += len;
-    xSemaphoreGive(semaphore_writer_bin);
+    #ifdef MUTEX
+      xSemaphoreGive(mutex_writer_bin);
+    #else
+      xSemaphoreGive(semaphore_writer_bin);
+    #endif
     return len;
   }
   else {
     _overflow_write = true;
     //Serial.println("Overflow nello scrivere nel BUFFER scrittura");
-    xSemaphoreGive(semaphore_writer_bin);  
+    #ifdef MUTEX
+      xSemaphoreGive(mutex_writer_bin);
+    #else
+      xSemaphoreGive(semaphore_writer_bin);
+    #endif
+    //xSemaphoreGive(semaphore_writer_bin);  
     return 0;
   }
   //xSemaphoreGive(semaphore_writer_bin);
@@ -401,12 +454,26 @@ void SerialWireless_::begin() {
   configST myConfig; // variabile di utilità per configurazione
   // ============ inizializzazione semafori =============
   tx_sem = xSemaphoreCreateBinary();
+  
+  #ifdef MUTEX
+  mutex_tx_serial = xSemaphoreCreateMutex();
+  mutex_writer_bin = xSemaphoreCreateMutex();
+  #else
   semaphore_tx_serial = xSemaphoreCreateBinary(); // semaforo per tx dati seriali
   semaphore_writer_bin = xSemaphoreCreateBinary();
+  #endif
+
 
   xSemaphoreGive(tx_sem);
+
+  #ifdef MUTEX
+  xSemaphoreGive(mutex_tx_serial);
+  xSemaphoreGive(mutex_writer_bin);
+  #else
   xSemaphoreGive(semaphore_tx_serial);
   xSemaphoreGive(semaphore_writer_bin);
+  #endif  
+
   // ==== fine inizializzazione semafori
 
 
@@ -953,15 +1020,23 @@ static void _esp_now_rx_cb(const esp_now_recv_info_t *info, const uint8_t *data,
 
 static void _esp_now_tx_cb(const uint8_t *mac_addr, esp_now_send_status_t status) {
   
-  
-  xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
-  
+  #ifdef MUTEX
+    xSemaphoreTake(mutex_writer_bin, portMAX_DELAY);
+  #else
+    xSemaphoreTake(semaphore_writer_bin, portMAX_DELAY);
+  #endif
+
   if (SerialWireless._writeLen > 0 ) {
     SerialWireless.SendData_sem();
   }
   else xSemaphoreGive(/*SerialWireless.*/tx_sem);
     
-  xSemaphoreGive(semaphore_writer_bin);
+  
+  #ifdef MUTEX
+    xSemaphoreGive(mutex_writer_bin);
+  #else
+    xSemaphoreGive(semaphore_writer_bin);
+  #endif
   
 }
 
@@ -969,8 +1044,13 @@ static void _esp_now_tx_cb(const uint8_t *mac_addr, esp_now_send_status_t status
 // CALLBACK
 void timer_callback_serial(void* arg) {
     //Serial.println("Timer scaduto!");
-  xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);  // fai solo se semaforo libero, altrimenti
-  //Serial.println("Timer scaduto e semaforo rilasciato: eseguo la funzione!");
+  
+  #ifdef MUTEX
+    xSemaphoreTake(mutex_tx_serial, portMAX_DELAY);  // fai solo se semaforo libero, altrimenti
+  #else
+    xSemaphoreTake(semaphore_tx_serial, portMAX_DELAY);  // fai solo se semaforo libero, altrimenti
+  #endif
+    //Serial.println("Timer scaduto e semaforo rilasciato: eseguo la funzione!");
   //if (SerialWireless.lenBufferSerialWrite) {
   while (SerialWireless.lenBufferSerialWrite) {
     SerialWireless.flush_sem();
@@ -981,7 +1061,13 @@ void timer_callback_serial(void* arg) {
     
     //if (SerialWireless.lenBufferSerialWrite) esp_timer_start_once(SerialWireless.timer_handle_serial, TIMER_HANDLE_SERIAL_DURATION_MICROS);
   //}
-  xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+  
+  #ifdef MUTEX
+    xSemaphoreGive(mutex_tx_serial);  // Rilascio il semaforo dopo la callback
+  #else
+    xSemaphoreGive(semaphore_tx_serial);  // Rilascio il semaforo dopo la callback
+  #endif
+
 }
 // ===============================================================================
 

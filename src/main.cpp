@@ -212,7 +212,18 @@ if (esp_timer_get_time() - timer_ultimo_dato_visualizzato > TEMPO_OGNI_VISUALIZZ
   pacchetti_ricevuti_da_callback = 0;
 }
 #endif
-
+vTaskDelay(pdMS_TO_TICKS(1));
+rx_avalaible = Serial.available();
+if (rx_avalaible > FIFO_SIZE_READ_SER) rx_avalaible = FIFO_SIZE_READ_SER;
+if (rx_avalaible)
+{
+    Serial.readBytes(buffer_aux, rx_avalaible);
+    SerialWireless.write(buffer_aux, rx_avalaible);
+    SerialWireless.flush();
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef COMMENTO
+  
   //micros();
   //esp_timer_get_time();
   if (esp_timer_get_time() - timer_serial_micro > TIME_OUT_SERIAL_MICRO) // controlla ogni millisecondo più o meno a 9600 bps
@@ -231,6 +242,10 @@ if (esp_timer_get_time() - timer_ultimo_dato_visualizzato > TEMPO_OGNI_VISUALIZZ
   } 
   timer_serial_micro = esp_timer_get_time();
 }
+#endif
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
   /*
