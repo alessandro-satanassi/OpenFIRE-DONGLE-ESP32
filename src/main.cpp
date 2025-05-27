@@ -219,8 +219,9 @@ if (rx_avalaible)
 {
     Serial.readBytes(buffer_aux, rx_avalaible);
     SerialWireless.write(buffer_aux, rx_avalaible);
-    SerialWireless.flush();
+    SerialWireless.flush(); // provare a togliere
 }
+//yield();
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef COMMENTO
   
