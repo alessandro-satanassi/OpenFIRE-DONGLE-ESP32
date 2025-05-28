@@ -1,34 +1,51 @@
 // by SATANASSI Alessandro
 
 #include <Arduino.h>
-
+#include <SPI.h>
 
 #include "TinyUSB_Devices.h"
 
-#if defined(DEVICE_LILYGO_T_DONGLE_S3)
-  #include "logo.h"
-  #include "pin_config_DONGLE.h"
-  #include <Adafruit_ST7735.h>
-  Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
-  
-  #define WHITE            0xFFFF
-  #define BLACK            0x0000
-  #define BLUE             0xF800
-  #define BRED             0XF81F
-  #define GRED             0XFFE0
-  #define GBLUE            0X07FF
-  #define RED              0x001F
-  #define MAGENTA          0xF81F
-  #define GREEN            0x07E0
-  #define CYAN             0x7FFF
-  #define YELLOW           0xFFE0
-  #define BROWN            0XBC40
-  #define BRRED            0XFC07
-  #define GRAY             0X8430
-#endif // DEVICE_LILYGO_T_DONGLE_S3
+#ifdef USES_DISPLAY
+  #include "OpenFIRE_logo.h"
+  #ifdef USE_LOVYAN_GFX
+    #define LGFX_USE_V1
+    #include <LovyanGFX.hpp>
+    #include "LGFX_096_ST7735S_80x160.hpp"
 
-#define OPENFIRE_DONGLE_VERSION 6.9
-#define OPENFIRE_DONGLE_CODENAME "Sessantanove"
+    LGFX tft;
+
+    #define WHITE            TFT_WHITE
+    #define BLACK            TFT_BLACK
+    #define BLUE             TFT_BLUE
+    #define RED              TFT_RED
+    #define MAGENTA          TFT_MAGENTA
+    #define GREEN            TFT_GREEN
+    #define CYAN             TFT_CYAN
+    #define YELLOW           TFT_YELLOW
+    #define BROWN            TFT_BROWN
+    #define GRAY             TFT_LIGHTGRAY
+    #define ORANGE           TFT_ORANGE
+  #else
+    #include <Adafruit_ST7735.h>
+    Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+
+    #define WHITE            ST7735_WHITE
+    #define BLACK            ST7735_BLACK
+    #define BLUE             ST7735_BLUE
+    #define RED              ST7735_RED
+    #define MAGENTA          ST7735_MAGENTA
+    #define GREEN            ST7735_GREEN
+    #define CYAN             ST7735_CYAN
+    #define YELLOW           ST7735_YELLOW
+    #define BROWN            0XBC40
+    #define GRAY             0X8430
+    #define ORANGE           ST7735_ORANGE
+  
+  #endif // USE_LOVYAN_GFX
+
+#endif // USES_DISPLAY
+
+#include "OpenFIRE-DONGLE-version.h"
 
 // ================== GESTIONE DUAL CORE ============================
 #if defined(DUAL_CORE) && defined(ESP_PLATFORM) && false
@@ -56,14 +73,19 @@ void setup() {
     !ARDUINO_RUNNING_CORE); /* pin task to core 0 */
   #endif
   // ======================== FINE X GESTIONE DUAL CORE =================================       
- 
-  #if defined(DEVICE_LILYGO_T_DONGLE_S3)
-    pinMode(TFT_LEDA_PIN, OUTPUT);
-    digitalWrite(TFT_LEDA_PIN, 0); // accende retroilluminazione del display
-  #endif // DEVICE_LILYGO_T_DONGLE_S3
-  
-  #if defined(DEVICE_LILYGO_T_DONGLE_S3)
-    tft.initR(INITR_MINI160x80_PLUGIN);  // Init ST7735S mini display
+
+  #ifdef USES_DISPLAY
+    #ifdef USE_LOVYAN_GFX
+      tft.init();
+      tft.setSwapBytes(true);
+      tft.setColorDepth(16);
+      //tft.setBrightness(255); 
+    #else
+      tft.initR(INITR_MINI160x80_PLUGIN);  // Init ST7735S mini display
+      pinMode(TFT_PIN_BL, OUTPUT);
+      digitalWrite(TFT_PIN_BL, 0); // accende retroilluminazione del display
+    #endif // USE_LOVYAN_GFX
+    
     tft.setRotation(3);
     
     /*
@@ -81,7 +103,12 @@ void setup() {
     delay (1000);
     */
     tft.fillScreen(BLACK);
-    tft.drawRGBBitmap(10,1,(uint16_t *)logo_rgb_alpha_open,LOGO_RGB_ALPHA_OPEN_WIDTH,LOGO_RGB_ALPHA_OPEN_HEIGHT);
+    #ifdef USE_LOVYAN_GFX
+      tft.pushImage(10,1,LOGO_RGB_ALPHA_OPEN_WIDTH, LOGO_RGB_ALPHA_OPEN_HEIGHT, (uint16_t *)logo_rgb_alpha_open);
+    #else
+      tft.drawRGBBitmap(10,1,(uint16_t *)logo_rgb_alpha_open,LOGO_RGB_ALPHA_OPEN_WIDTH,LOGO_RGB_ALPHA_OPEN_HEIGHT);
+    #endif //USE_LOVYAN_GFX
+    
     delay (3000);
 
     tft.fillScreen(BLACK);
@@ -102,8 +129,7 @@ void setup() {
     //tft.printf("Player: %2d", 1);
     //tft.println("1");
     //tft.fillRect(100,60,50,20,0/*BLACK*/);
-
-  #endif // DEVICE_LILYGO_T_DONGLE_S3
+  #endif //USES_DISPLAY
 
   // ====== gestione connessione wireless ====================
   SerialWireless.begin();
@@ -126,8 +152,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   // ====== fine connessione USB ==========================================================================
   
-  #if defined(DEVICE_LILYGO_T_DONGLE_S3)
-    
+  #ifdef USES_DISPLAY   
     tft.fillScreen(BLACK);
     /*
     tft.setTextSize(2);
@@ -148,7 +173,7 @@ void setup() {
     tft.setTextColor(GRAY);
     tft.printf("Channel: %d", usb_data_wireless.channel);
 
-  #endif // DEVICE_LILYGO_T_DONGLE_S3
+  #endif // USES_DISPLAY
 }
 
 #define FIFO_SIZE_READ_SER 200  // l'originale era 32

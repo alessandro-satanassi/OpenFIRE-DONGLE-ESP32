@@ -2,12 +2,18 @@
 
 #include "OpenFIRE_Wireless.h"
 
-
-#if defined(DEVICE_LILYGO_T_DONGLE_S3)
-  #include <Adafruit_ST7735.h>
-  extern Adafruit_ST7735 tft;
-#endif // DEVICE_LILYGO_T_DONGLE_S3
-
+#ifdef DONGLE
+  #ifdef USES_DISPLAY
+    #ifdef USE_LOVYAN_GFX
+      #include <LovyanGFX.hpp>
+      #include "..\..\src\LGFX_096_ST7735S_80x160.hpp"
+      extern LGFX tft;
+    #else
+      #include <Adafruit_ST7735.h>
+      extern Adafruit_ST7735 tft;
+    #endif // USE_LOVYAN_GFX
+  #endif // USES_DISPLAY
+#endif // DONGLE
 
 
 #define ESPNOW_WIFI_CHANNEL_DEFAULT 12
@@ -377,17 +383,17 @@ void SerialWireless_::begin() {
 
   esp_err_t err = esp_wifi_get_mac(WIFI_IF_STA, mac_esp_inteface);
   if (err != ESP_OK) {
-    Serial.println("Failed to read MAC address");
+    //Serial.println("Failed to read MAC address");
   }
   
   err = esp_wifi_set_channel(espnow_wifi_channel, WIFI_SECOND_CHAN_NONE);
   if (err != ESP_OK) {
-    Serial.printf("esp_wifi_set_channel failed! 0x%x", err);
+    //Serial.printf("esp_wifi_set_channel failed! 0x%x", err);
   }
   
   err = esp_wifi_set_max_tx_power(espnow_wifi_power); // tra 8 e 84 corrispondenti a 2dbm a 20 dbm);
   if (err != ESP_OK) {
-    Serial.printf("esp_wifi_set_max_tx_power failed! 0x%x", err);
+    //Serial.printf("esp_wifi_set_max_tx_power failed! 0x%x", err);
   }
 
   WiFi.disconnect();  // ???
@@ -396,7 +402,7 @@ void SerialWireless_::begin() {
     
   err = esp_now_init();
   if (err != ESP_OK) {
-    Serial.printf("esp_now_init failed! 0x%x", err);
+    //Serial.printf("esp_now_init failed! 0x%x", err);
   }
 
   if (lastDongleSave) {
@@ -411,17 +417,17 @@ void SerialWireless_::begin() {
   peerInfo.channel = espnow_wifi_channel;
   peerInfo.encrypt = false;
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("Errore nell'aggiunta del peer");
+    //Serial.println("Errore nell'aggiunta del peer");
   }
 
   err = esp_now_register_recv_cb(_esp_now_rx_cb);
   if (err != ESP_OK) {
-    Serial.printf("esp_now_register_recv_cb failed! 0x%x", err);
+    //Serial.printf("esp_now_register_recv_cb failed! 0x%x", err);
   }
 
   err = esp_now_register_send_cb(_esp_now_tx_cb);
   if (err != ESP_OK) {
-    Serial.printf("esp_now_register_send_cb failed! 0x%x", err);
+    //Serial.printf("esp_now_register_send_cb failed! 0x%x", err);
   }
 
   myConfig.port         = &Serial; // questo andrà tolta - rimasta solo per contabilità =========================================
@@ -443,7 +449,7 @@ bool SerialWireless_::end() {
   esp_now_del_peer(peerAddress);
   esp_err_t err = esp_now_deinit();
   if (err != ESP_OK) {
-    Serial.printf("esp_now_deinit failed! 0x%x", err);
+    //Serial.printf("esp_now_deinit failed! 0x%x", err);
     return false;
   }
   WiFi.disconnect(true);
@@ -468,11 +474,15 @@ bool SerialWireless_::connection_dongle() {
   memcpy(&aux_buffer_tx[1], SerialWireless.mac_esp_inteface, 6);
   memcpy(&aux_buffer_tx[7], peerAddress, 6);
   
-  #if defined(DEVICE_LILYGO_T_DONGLE_S3)
-    tft.fillRect(95,60,50,20,0/*BLACK*/);
-    tft.setCursor(95, 60);  
-    tft.printf("%2d", channel);   
-  #endif // DEVICE_LILYGO_T_DONGLE_S3
+  
+  #ifdef DONGLE
+    #ifdef USES_DISPLAY
+      tft.fillRect(95,60,50,20,0/*BLACK*/);
+      tft.setCursor(95, 60);  
+      tft.printf("%2d", channel);
+    #endif //USES_DISPLAY
+  #endif //DONGLE
+  
   
   while (stato_connessione_wireless != CONNECTION_STATE::DEVICES_CONNECTED) {
     if (stato_connessione_wireless == CONNECTION_STATE::NONE_CONNECTION) {
@@ -481,11 +491,13 @@ bool SerialWireless_::connection_dongle() {
         channel++;
         if (channel >13) channel = 1;
         
-        #if defined(DEVICE_LILYGO_T_DONGLE_S3)
-          tft.fillRect(95,60,50,20,0/*BLACK*/);  
-          tft.setCursor(95, 60);
-          tft.printf("%2d", channel);   
-        #endif // DEVICE_LILYGO_T_DONGLE_S3        
+        #ifdef DONGLE
+          #ifdef USES_DISPLAY
+            tft.fillRect(95,60,50,20,0/*BLACK*/);  
+            tft.setCursor(95, 60);
+            tft.printf("%2d", channel);   
+          #endif //USES_DISPLAY
+        #endif //DONGLE
         
         if (esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
           //Serial.printf("DONGLE - esp_wifi_set_channel failed!");
@@ -618,6 +630,7 @@ void packet_callback_read_dongle() {
   switch (SerialWireless.packet.currentPacketID()) {
     case PACKET_TX::SERIAL_TX:
       Serial.write(&SerialWireless.packet.rxBuff[PREAMBLE_SIZE], SerialWireless.packet.bytesRead);
+      Serial.flush(); // ????
       break;
     case PACKET_TX::MOUSE_TX :
       usbHid.sendReport(HID_RID_e::HID_RID_MOUSE, &SerialWireless.packet.rxBuff[PREAMBLE_SIZE], SerialWireless.packet.bytesRead);  
