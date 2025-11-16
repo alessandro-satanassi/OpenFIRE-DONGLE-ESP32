@@ -149,7 +149,7 @@ void setup() {
   TinyUSBDevices.begin(1);
   Serial.begin(9600);
   Serial.setTimeout(0);
-  Serial.setTxTimeoutMs(0);
+  ////////////////////Serial.setTxTimeoutMs(0);
   // ====== fine connessione USB ==========================================================================
   
   #ifdef USES_DISPLAY   
