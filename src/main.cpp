@@ -132,6 +132,7 @@ void setup() {
   #endif //USES_DISPLAY
 
   // ====== gestione connessione wireless ====================
+  SerialWireless.init_wireless();
   SerialWireless.begin();
   SerialWireless.connection_dongle();
   // ====== fine gestione wireless .. va avanti solo dopo che si è accoppiato il dispositivo =======
