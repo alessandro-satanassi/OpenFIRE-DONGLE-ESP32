@@ -2,11 +2,11 @@
 #define OPENFIRE_DONGLE_VERSION_H
 
 // Versione attuale
-#define OPENFIRE_DONGLE_VERSION 6.0
+#define OPENFIRE_DONGLE_VERSION 6.1
 ///////#define OPENFIRE_CODENAME "Dawn Sigma rc2"
 //#define GIT_HASH
 #define OPENFIRE_DONGLE_VERSION_MAJOR 6
-#define OPENFIRE_DONGLE_VERSION_MINOR 0
+#define OPENFIRE_DONGLE_VERSION_MINOR 1
 #define OPENFIRE_DONGLE_VERSION_PATCH 0
 #define OPENFIRE_DONGLE_VERSION_TYPE "rc2"  // Per indicare pre-release (alpha, beta, RC(Release Candidate), stable)
 
